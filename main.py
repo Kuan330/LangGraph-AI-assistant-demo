@@ -122,7 +122,7 @@ def planner_node(state: AgentState):
     today = get_current_date()
 
     prompt = (f"Today is {today}. Topic: '{state['topic']}'. "
-                "Break this into 3 distinct, actionable web search queries. "
+                "Break this into 5 distincts, actionable web search queries. "
                 "Return ONLY the queries as a bulleted list.")
     response = llm.invoke([HumanMessage(content=prompt)])
     
@@ -305,7 +305,7 @@ if __name__ == "__main__":
     user_input = input("Now proceed with writing the Final Report? (yes/no): ")
 
     if user_input.lower() in ["yes", "y"]:
-        print("\n Approved! Resuming...")
+        print("\n Approved. Now writing the Final Report...\n")
             
         # Resume execution (Pass None to continue from the last state)
         result = app.invoke(None, config=thread_config)
