@@ -50,8 +50,8 @@ else:
     from langchain_google_genai import ChatGoogleGenerativeAI
     from langchain_community.tools import DuckDuckGoSearchRun
 
-    # The Brain (Gemini 1.5 Flash is free-tier eligible)
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+    # The large language model (this need to be checked + updated regularly)
+    llm = ChatGoogleGenerativeAI(model="models/gemini-flash-latest", temperature=0)
     
     # The Tool (DuckDuckGo)
     # A "Wrapper" so it behaves like Tavily (returning a list)
@@ -67,11 +67,9 @@ else:
 
 # Step 3
 # 3 Nodes Definitions (workers)
-
 def planner_node(state: AgentState):
-    print(f"This is the Planner, now planning research for '{state['topic']}'") # checkbox
+    print(f"This is the Planner, now planning research for '{state['topic']}'.") # checkbox
     
-    # Ask the LLM to generate 3 search queries
     prompt = (
         f"You are a research planner. Break down the topic '{state['topic']}' "
         f"into 3 distinct, actionable web search queries. "
@@ -79,11 +77,23 @@ def planner_node(state: AgentState):
     )
     response = llm.invoke([HumanMessage(content=prompt)])
     
-    # Clean up the response to get a python list
-    # Split by newlines and remove bullet points
-    plan_steps = [line.strip("- *") for line in response.content.split("\n") if line.strip()]
+    # To Check and Fix the output format from Google Gemini
+    # Sometimes Google returns a string, sometimes a list with a signature
+    # This checks which one it is and extract only the text
+    # Handle Google's list format (Text + Signature)
+    content = response.content
+    if isinstance(content, list):
+
+        # Extract just the text part
+        text_content = content[0].get('text', str(content))
+    else:
+        text_content = str(content)
+
+    # Now the string is clean, split into lines and extract the plan steps
+    plan_steps = [line.strip("- *") for line in text_content.split("\n") if line.strip()]
     
     return {"plan": plan_steps}
+
 
 def researcher_node(state: AgentState):
     print("This is the Researcher, now conducting web searches based on the plan.") # checkbox
@@ -102,9 +112,9 @@ def researcher_node(state: AgentState):
 
     return {"research_data": research_results}
 
+
 def responder_node(state: AgentState):
     print("This is the Responder, now compiling the final answer.") # checkbox
-    # Combine all research notes into one big string
     data = "\n".join(state["research_data"])
     
     prompt = (
@@ -114,4 +124,55 @@ def responder_node(state: AgentState):
     )
     
     response = llm.invoke([HumanMessage(content=prompt)])
-    return {"final_answer": response.content}
+    
+    # To Check and Fix the output format from Google Gemini
+    # Sometimes Google returns a string, sometimes a list with a signature.
+    # This checks which one it is and extract only the text.
+    content = response.content
+    
+    if isinstance(content, list):
+        # If it's a list, grab the text from the first part
+        # content looks like: [{'text': 'The answer...', 'type': 'text'}]
+        final_text = content[0].get('text', str(content))
+    else:
+        # If it's already a string, just use it
+        final_text = content
+
+        
+    return {"final_answer": final_text}
+
+
+# Step 4
+# Now, set up the StateGraph to connect everything together.
+workflow = StateGraph(AgentState)
+
+# Add the workers to the graph
+workflow.add_node("planner", planner_node)
+workflow.add_node("researcher", researcher_node)
+workflow.add_node("responder", responder_node)
+
+# Flow definition - the order in which nodes are executed
+workflow.set_entry_point("planner")        # Start with the Planner
+workflow.add_edge("planner", "researcher") # Then go to Researcher
+workflow.add_edge("researcher", "responder") # Then to Responder
+workflow.add_edge("responder", END)        # Then finish
+
+# Compile the graph into an executable app
+app = workflow.compile()
+
+
+# Step 5
+# Here test the entire setup with a sample topic.
+if __name__ == "__main__":
+    # This can change the topic wanted to research
+    topic = "The current state of AI computing in 2025"
+
+    print(f"\n Starting the research based on: {topic}\n")
+
+    # Run the graph
+    result = app.invoke({"topic": topic, "messages": []})
+    
+    print("\n" + "="*40)
+    print(" Here is the final answer:\n")
+    print("="*40)
+    print(result["final_answer"])
