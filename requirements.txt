@@ -1,0 +1,10 @@
+langgraph
+langchain
+langchain-openai
+langchain-google-genai
+langchain-community
+tavily-python
+duckduckgo-search
+python-dotenv
+
+## always ensure compatibility, not mentioned which versions to use as of now
