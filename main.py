@@ -1,16 +1,16 @@
 """
-This is the main code for the Research Assistant Agent using LangGraph.
-It sets up an agent that can plan, research, and respond to user queries
-using either free or paid AI services based on configuration.
+Research Assistant Agent using LangGraph
 
-3 Steps:
-1. Define the AgentState structure.
-2. Set up the LLM and web search tool based on configuration.
-3. Define the planner, researcher, and responder nodes.
-4. Set up routing logic and compile the StateGraph into an executable app.
-5. Test the entire setup with a sample topic.
-6. Run the agent and print the final answer.
-
+Description:
+    This script implements a LangGraph-based agent capable of planning, 
+    researching, and summarizing topics using external search tools.
+    
+Features:
+    - Multi-Node Architecture (Planner -> Researcher -> Responder)
+    - Conditional Logic (Auto-retry if search fails)
+    - Human-in-the-Loop (Pauses for approval before writing)
+    - Persistent State (MemorySaver)
+    - PDF Export Generation
 """
 
 
@@ -22,15 +22,15 @@ from typing import Annotated, List, TypedDict, Literal
 
 # Load environment variables
 from dotenv import load_dotenv
+
+# LangChain / LangGraph Imports
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver  # this for Pausing
+from fpdf import FPDF  #  this is for PDF
 
 # This loads the .env file so Python can see the keys
 load_dotenv()
-
-# We need these for the Graph logic
-from langchain_core.messages import BaseMessage, HumanMessage
-from langgraph.graph import StateGraph, END
 
 # configurations
 # Set to True to pay for OpenAI/Tavily. 
@@ -42,6 +42,10 @@ use_paid_version = False
 # First, define the structure of the agent's state.
 # Think of this as the "Shared Notebook" that gets passed between workers.
 class AgentState(TypedDict):
+    """
+    The persistent state of the agent, passed between graph nodes.
+    """
+
     topic: str
     plan: List[str]
     research_data: List[str]
@@ -78,35 +82,47 @@ else:
     # The Tool (DuckDuckGo)
     # A "Wrapper" so it behaves like Tavily (returning a list)
     class DuckDuckGoWrapper:
-            def invoke(self, query):
-                try:
-                    search = DuckDuckGoSearchRun()
-                    result = search.invoke(query)
-                    return [{"content": result}]
-                except Exception as e:
-                    return [] 
+        """
+        Wrapper to standardize DuckDuckGo output to match Tavily's list format.
+        """
+        def invoke(self, query):
+            try:
+                search = DuckDuckGoSearchRun()
+                result = search.invoke(query)
+                return [{"content": result}]
+            except Exception as e:
+                return [] 
                 
     web_search_tool = DuckDuckGoWrapper()
 
 
 # Time helper function
 def get_current_date():
+    """
+    Tool: Returns the current date as a string (YYYY-MM-DD).
+    Used by the Planner to ensure research context is up-to-date.
+    """
+
     return datetime.now().strftime("%Y-%m-%d")
 
 # Step 3
 # 3 Nodes Definitions (workers)
 def planner_node(state: AgentState):
+    """
+    Node: Generates a research plan based on the user's topic.
+    
+    Returns:
+        dict: Updates the 'plan' and increments 'loop_count'.
+    """
+
     print(f"This is the Planner, now planning research for '{state['topic']}'.") # checkbox
 
     # Use Tool #2 here!
     today = get_current_date()
 
-    prompt = (
-            f"Today is {today}. \n"
-            f"Topic: '{state['topic']}'\n"
-            f"Break this into 3 distinct, actionable web search queries."
-            f"Return ONLY the queries as a bulleted list.")
-    
+    prompt = (f"Today is {today}. Topic: '{state['topic']}'. "
+                "Break this into 3 distinct, actionable web search queries. "
+                "Return ONLY the queries as a bulleted list.")
     response = llm.invoke([HumanMessage(content=prompt)])
     
     # To Check and Fix the output format from Google Gemini
@@ -130,6 +146,13 @@ def planner_node(state: AgentState):
 
 
 def researcher_node(state: AgentState):
+    """
+    Node: Executes the search queries defined in the plan.
+    
+    Returns:
+        dict: Updates 'research_data' with search results.
+    """
+
     print("This is the Researcher, now conducting web searches based on the plan.") # checkbox
     plan = state.get("plan", [])
     research_results = []
@@ -159,6 +182,13 @@ def researcher_node(state: AgentState):
 
 
 def responder_node(state: AgentState):
+    """
+    Node: Synthesizes the gathered data into a final answer.
+    
+    Returns:
+        dict: Updates 'final_answer'.
+    """
+    
     print("This is the Responder, now compiling the final answer.") # checkbox
 
     # For bug fix: Check if the researcher actually found anything
@@ -177,7 +207,7 @@ def responder_node(state: AgentState):
     response = llm.invoke([HumanMessage(content=prompt)])
 
     # Bug fix 2: See exactly what Google sent back (even if it's hidden)
-    print(f" DEBUG RAW RESPONSE: {response}")
+    print(f" Debug raw response: {response}")
 
     # To Check and Fix the output format from Google Gemini
     # Sometimes Google returns a string, sometimes a list with a signature.
@@ -199,9 +229,11 @@ def responder_node(state: AgentState):
 # Routing logic based on data quality
 def router_logic(state: AgentState) -> Literal["responder", "planner"]:
     """
-    Decides based on data quality:
-    - If data exists -> Go to Responder
-    - If NO data (and haven't retried too much) -> Go back to Planner
+    Conditional Logic: Decides the next step based on data quality.
+    
+    Returns:
+        'responder': If data was found OR retry limit reached.
+        'planner': If no data was found (triggers a retry).
     """
 
     data_count = len(state.get("research_data", []))
@@ -214,8 +246,28 @@ def router_logic(state: AgentState) -> Literal["responder", "planner"]:
         return "planner"
 
 
+# PDF saving function
+def save_to_pdf(text, filename="Research_Report.pdf"):
+    """
+    Utility: Saves the provided text string to a PDF file.
+    Includes Latin-1 encoding handling to prevent crashes on special characters.
+    """
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    
+    # Handle Unicode issues 
+    text = text.encode('latin-1', 'replace').decode('latin-1')
+    
+    pdf.multi_cell(0, 10, txt=text)
+    pdf.output(filename)
+    print(f"\n PDF saved successfully: {filename}")
+
+
+
 # Step 5
-# Now, set up the StateGraph to connect everything together.
+# Now, set up the StateGraph to connect everything together, with pausing support.
 workflow = StateGraph(AgentState)
 
 # Add the workers to the graph
@@ -228,19 +280,15 @@ workflow.set_entry_point("planner")        # Start with the Planner
 workflow.add_edge("planner", "researcher") # Then go to Researcher
 
 # Logic to decide next step based on research results
-workflow.add_conditional_edges(
-    "researcher",
-    router_logic,
-    {
-        "planner": "planner",
-        "responder": "responder"
-    }
-)
-
+workflow.add_conditional_edges("researcher", router_logic, {"planner": "planner", "responder": "responder"})
 workflow.add_edge("responder", END)
 
-# Compile the graph into an executable app
-app = workflow.compile()
+# Set up the checkpointer for pausing
+memory = MemorySaver() # This saves the state to pause
+app = workflow.compile(
+    checkpointer=memory, 
+    interrupt_before=["responder"] # pause before running Responder
+)
 
 
 # Step 6
@@ -251,10 +299,31 @@ if __name__ == "__main__":
 
     print(f"\n Starting the research based on: {topic}\n")
 
-    # Run the graph
-    result = app.invoke({"topic": topic, "messages": [], "loop_count": 0})
+    # Thread ID to track the conversation state
+    thread_config = {"configurable": {"thread_id": "1"}}
+
+    # Run the graph until the pause point
+    app.invoke({"topic": topic, "messages": [], "loop_count": 0}, config=thread_config)
     
+    # Human Approval
     print("\n" + "="*40)
-    print(" Here is the final answer:\n")
-    print("="*40)
-    print(result["final_answer"])
+    print("Here pause: The Research is done. Ready to write the report.")
+    user_input = input("Now proceed with writing the Final Report? (yes/no): ")
+
+    if user_input.lower() in ["yes", "y"]:
+        print("\n Approved! Resuming...")
+            
+        # Resume execution (Pass None to continue from the last state)
+        result = app.invoke(None, config=thread_config)
+        
+        final_text = result["final_answer"]
+        print("\n" + "="*40)
+        print("Final Report")
+        print("="*40)
+        print(final_text)
+
+        # Save to PDF
+        save_to_pdf(final_text)
+            
+    else:
+        print("\n Operation Cancelled.")
