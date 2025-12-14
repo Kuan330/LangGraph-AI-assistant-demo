@@ -1,10 +1,9 @@
 langgraph
 langchain
-langchain-openai
-langchain-google-genai
 langchain-community
-tavily-python
-duckduckgo-search
+langchain-google-genai
+langchain-openai
+duckduckgo-search>=6.1.0
 python-dotenv
 
-## always ensure compatibility, not mentioned which versions to use as of now
+## always ensure compatibility, some not mentioned which versions to use as of now
