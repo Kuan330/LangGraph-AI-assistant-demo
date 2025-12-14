@@ -1,10 +1,31 @@
+"""
+This is the main code for the Research Assistant Agent using LangGraph.
+It sets up an agent that can plan, research, and respond to user queries
+using either free or paid AI services based on configuration.
+
+3 Steps:
+1. Define the AgentState structure.
+2. Set up the LLM and web search tool based on configuration.
+3. Define the planner, researcher, and responder nodes.
+4. Set up routing logic and compile the StateGraph into an executable app.
+5. Test the entire setup with a sample topic.
+6. Run the agent and print the final answer.
+
+"""
+
+
 # Setting the foundation for an agent that can plan, research, and respond to user queries.
 import operator
 import os
-from typing import Annotated, List, TypedDict
+from datetime import datetime
+from typing import Annotated, List, TypedDict, Literal
+
+# Load environment variables
+from dotenv import load_dotenv
+from langchain_core.messages import BaseMessage, HumanMessage
+from langgraph.graph import StateGraph, END
 
 # This loads the .env file so Python can see the keys
-from dotenv import load_dotenv
 load_dotenv()
 
 # We need these for the Graph logic
@@ -16,22 +37,23 @@ from langgraph.graph import StateGraph, END
 # Set to False to use Free Gemini/DuckDuckGo.
 use_paid_version = False 
 
+
+# Step 1
 # First, define the structure of the agent's state.
 # Think of this as the "Shared Notebook" that gets passed between workers.
 class AgentState(TypedDict):
-    topic: str                # The user's input (e.g., "AI in 2025")
-    plan: List[str]           # The Planner writes steps here
-    research_data: List[str]  # The Researcher adds notes here
-    final_answer: str         # The Responder writes the final essay here
+    topic: str
+    plan: List[str]
+    research_data: List[str]
+    final_answer: str
+    messages: Annotated[List[BaseMessage], operator.add]
+    loop_count: int  # Required to stop infinite loops in conditional edges
 
-    # 'messages' is required by LangGraph to track chat history
-    messages: Annotated[List[BaseMessage], operator.add] #checkbox
-
-print("First Step Completed-> Initialising memory.")
+print("First Step Completed-> Initialising memory.") # checkbox
 
 
 # Step 2
-# Now, Here is the model and tool setup based on the configuration.
+# Now, this is the model and tool setup based on the configuration.
 
 if use_paid_version:
     # paid options (OpenAI + Tavily)
@@ -56,25 +78,35 @@ else:
     # The Tool (DuckDuckGo)
     # A "Wrapper" so it behaves like Tavily (returning a list)
     class DuckDuckGoWrapper:
-        def invoke(self, query):
-            search = DuckDuckGoSearchRun()
-            result = search.invoke(query)
-            return [{"content": result}] # Return as a list to match Tavily
-            
+            def invoke(self, query):
+                try:
+                    search = DuckDuckGoSearchRun()
+                    result = search.invoke(query)
+                    return [{"content": result}]
+                except Exception as e:
+                    return [] 
+                
     web_search_tool = DuckDuckGoWrapper()
-    print("Using Free option (Gemini + DuckDuckGo)") # checkbox
 
+
+# Time helper function
+def get_current_date():
+    return datetime.now().strftime("%Y-%m-%d")
 
 # Step 3
 # 3 Nodes Definitions (workers)
 def planner_node(state: AgentState):
     print(f"This is the Planner, now planning research for '{state['topic']}'.") # checkbox
-    
+
+    # Use Tool #2 here!
+    today = get_current_date()
+
     prompt = (
-        f"You are a research planner. Break down the topic '{state['topic']}' "
-        f"into 3 distinct, actionable web search queries. "
-        f"Return ONLY the queries as a bulleted list (no intro text)."
-    )
+            f"Today is {today}. \n"
+            f"Topic: '{state['topic']}'\n"
+            f"Break this into 3 distinct, actionable web search queries."
+            f"Return ONLY the queries as a bulleted list.")
+    
     response = llm.invoke([HumanMessage(content=prompt)])
     
     # To Check and Fix the output format from Google Gemini
@@ -92,7 +124,9 @@ def planner_node(state: AgentState):
     # Now the string is clean, split into lines and extract the plan steps
     plan_steps = [line.strip("- *") for line in text_content.split("\n") if line.strip()]
     
-    return {"plan": plan_steps}
+    # Increment loop count so do not loop forever
+    current_loop = state.get("loop_count", 0)
+    return {"plan": plan_steps, "loop_count": current_loop + 1}
 
 
 def researcher_node(state: AgentState):
@@ -103,12 +137,23 @@ def researcher_node(state: AgentState):
     for step in plan:
         print(f"Searching for: {step}")
         try:
-            # Use the tool that was set up in Step 2
             results = web_search_tool.invoke(step)
-            content = results[0]['content']
+            # Handle empty results for conditional logic
+            if not results:
+                continue
+
+            # To Check and Fix the output format from Google Gemini
+            # Sometimes Google returns a string, sometimes a list with a signature.
+            # This checks which one it is and extract only the text.
+            if isinstance(results, list):
+                content = results[0].get('content', str(results))
+            else:
+                content = str(results)
+                
             research_results.append(f"Source ({step}): {content}")
+
         except Exception as e:
-            research_results.append(f"Error searching {step}: {e}")
+            research_results.append(f"Error searching for {step}: {e}")
 
     return {"research_data": research_results}
 
@@ -150,8 +195,26 @@ def responder_node(state: AgentState):
         
     return {"final_answer": final_text}
 
-
 # Step 4
+# Routing logic based on data quality
+def router_logic(state: AgentState) -> Literal["responder", "planner"]:
+    """
+    Decides based on data quality:
+    - If data exists -> Go to Responder
+    - If NO data (and haven't retried too much) -> Go back to Planner
+    """
+
+    data_count = len(state.get("research_data", []))
+    loop_count = state.get("loop_count", 0)
+    
+    if data_count > 0 or loop_count >= 2:
+        return "responder"
+    else:
+        print(f" Decision: No data found. Now Retrying... (Attempt {loop_count}) ---")
+        return "planner"
+
+
+# Step 5
 # Now, set up the StateGraph to connect everything together.
 workflow = StateGraph(AgentState)
 
@@ -163,23 +226,33 @@ workflow.add_node("responder", responder_node)
 # Flow definition - the order in which nodes are executed
 workflow.set_entry_point("planner")        # Start with the Planner
 workflow.add_edge("planner", "researcher") # Then go to Researcher
-workflow.add_edge("researcher", "responder") # Then to Responder
-workflow.add_edge("responder", END)        # Then finish
+
+# Logic to decide next step based on research results
+workflow.add_conditional_edges(
+    "researcher",
+    router_logic,
+    {
+        "planner": "planner",
+        "responder": "responder"
+    }
+)
+
+workflow.add_edge("responder", END)
 
 # Compile the graph into an executable app
 app = workflow.compile()
 
 
-# Step 5
+# Step 6
 # Here test the entire setup with a sample topic.
 if __name__ == "__main__":
     # Here to change the research topic
-    topic = "\n The current state of AI computing in 2025"
+    topic = "The current state of Nvidia's AI technology and its future prospects."
 
     print(f"\n Starting the research based on: {topic}\n")
 
     # Run the graph
-    result = app.invoke({"topic": topic, "messages": []})
+    result = app.invoke({"topic": topic, "messages": [], "loop_count": 0})
     
     print("\n" + "="*40)
     print(" Here is the final answer:\n")
