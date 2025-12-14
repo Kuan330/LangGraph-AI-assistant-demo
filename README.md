@@ -18,7 +18,12 @@ This is an autonomous AI agent built with LangGraph that plans, researches, and 
    ```
 3. Create a .env file and add your Google API key:
     ```bash
-    GOOGLE_API_KEY=your_key_here
+    # Free option:
+    GOOGLE_API_KEY= Replace with your Google API key
+    
+    # Paid option:
+    # OPENAI_API_KEY= Replace with your OpenAI API key
+    # TAVILY_API_KEY= Replace with your Tavily API key
     ```
 4. Run the Agent:
     ```bash

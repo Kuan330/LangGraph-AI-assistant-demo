@@ -96,6 +96,7 @@ else:
     web_search_tool = DuckDuckGoWrapper()
     print(" Mode: Free (Gemini + DuckDuckGo)")
 
+
 # Time helper function
 def get_current_date():
     """
@@ -198,10 +199,10 @@ def responder_node(state: AgentState):
     data = "\n".join(state["research_data"])
     
     prompt = (
-        f"Topic: {state['topic']}\n"
-        f"Research Data:\n{data}\n\n"
-        f"Write a professional summary based ONLY on the data above."
-    )
+            f"Topic: {state['topic']}\n"
+            f"Research Data:\n{data}\n\n"
+            f"Write a professional summary based ONLY on the data above. "
+            f"Please explicitly cite your sources in the text.")
     
     response = llm.invoke([HumanMessage(content=prompt)])
 
