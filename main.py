@@ -53,7 +53,7 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
     loop_count: int  # Required to stop infinite loops in conditional edges
 
-print("First Step Completed-> Initialising memory.") # checkbox
+print("System initialised.") 
 
 
 # Step 2
@@ -69,7 +69,7 @@ if use_paid_version:
 
     # The Tool
     web_search_tool = TavilySearchResults(max_results=2)
-    print("Using Paid option (OpenAI + Tavily)") #checkbox
+    print(" Mode: Paid (OpenAI + Tavily)") 
 
 else:
     # free options (Gemini + DuckDuckGo)
@@ -94,7 +94,7 @@ else:
                 return [] 
                 
     web_search_tool = DuckDuckGoWrapper()
-
+    print(" Mode: Free (Gemini + DuckDuckGo)")
 
 # Time helper function
 def get_current_date():
@@ -104,6 +104,7 @@ def get_current_date():
     """
 
     return datetime.now().strftime("%Y-%m-%d")
+
 
 # Step 3
 # 3 Nodes Definitions (workers)
@@ -115,9 +116,8 @@ def planner_node(state: AgentState):
         dict: Updates the 'plan' and increments 'loop_count'.
     """
 
-    print(f"This is the Planner, now planning research for '{state['topic']}'.") # checkbox
+    print(f"This is the Planner, now planning research for '{state['topic']}'.")
 
-    # Use Tool #2 here!
     today = get_current_date()
 
     prompt = (f"Today is {today}. Topic: '{state['topic']}'. "
@@ -161,13 +161,12 @@ def researcher_node(state: AgentState):
         print(f"Searching for: {step}")
         try:
             results = web_search_tool.invoke(step)
+
             # Handle empty results for conditional logic
             if not results:
                 continue
 
-            # To Check and Fix the output format from Google Gemini
-            # Sometimes Google returns a string, sometimes a list with a signature.
-            # This checks which one it is and extract only the text.
+            # Format normalisation for different tool outputs
             if isinstance(results, list):
                 content = results[0].get('content', str(results))
             else:
@@ -209,11 +208,8 @@ def responder_node(state: AgentState):
     # Bug fix 2: See exactly what Google sent back (even if it's hidden)
     print(f" Debug raw response: {response}")
 
-    # To Check and Fix the output format from Google Gemini
-    # Sometimes Google returns a string, sometimes a list with a signature.
-    # This checks which one it is and extract only the text.
+    # Format normalisation for different tool outputs
     content = response.content
-    
     if isinstance(content, list):
         # If it's a list, grab the text from the first part
         # content looks like: [{'text': 'The answer...', 'type': 'text'}]
@@ -222,7 +218,6 @@ def responder_node(state: AgentState):
         # If it's already a string, just use it
         final_text = content
 
-        
     return {"final_answer": final_text}
 
 # Step 4
@@ -275,9 +270,9 @@ workflow.add_node("planner", planner_node)
 workflow.add_node("researcher", researcher_node)
 workflow.add_node("responder", responder_node)
 
-# Flow definition - the order in which nodes are executed
-workflow.set_entry_point("planner")        # Start with the Planner
-workflow.add_edge("planner", "researcher") # Then go to Researcher
+# Add edges between nodes
+workflow.set_entry_point("planner")   
+workflow.add_edge("planner", "researcher") 
 
 # Logic to decide next step based on research results
 workflow.add_conditional_edges("researcher", router_logic, {"planner": "planner", "responder": "responder"})
@@ -287,8 +282,7 @@ workflow.add_edge("responder", END)
 memory = MemorySaver() # This saves the state to pause
 app = workflow.compile(
     checkpointer=memory, 
-    interrupt_before=["responder"] # pause before running Responder
-)
+    interrupt_before=["responder"]) # Pause before writing the final report
 
 
 # Step 6
@@ -296,7 +290,6 @@ app = workflow.compile(
 if __name__ == "__main__":
     # Here to change the research topic
     topic = "The current state of Nvidia's AI technology and its future prospects."
-
     print(f"\n Starting the research based on: {topic}\n")
 
     # Thread ID to track the conversation state
