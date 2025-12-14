@@ -115,6 +115,12 @@ def researcher_node(state: AgentState):
 
 def responder_node(state: AgentState):
     print("This is the Responder, now compiling the final answer.") # checkbox
+
+    # For bug fix: Check if the researcher actually found anything
+    if not state["research_data"]:
+        print(" DEBUG: Research data is EMPTY! The researcher failed.")
+        return {"final_answer": "Error: No research data found. Please try again."}
+
     data = "\n".join(state["research_data"])
     
     prompt = (
@@ -124,7 +130,10 @@ def responder_node(state: AgentState):
     )
     
     response = llm.invoke([HumanMessage(content=prompt)])
-    
+
+    # Bug fix 2: See exactly what Google sent back (even if it's hidden)
+    print(f" DEBUG RAW RESPONSE: {response}")
+
     # To Check and Fix the output format from Google Gemini
     # Sometimes Google returns a string, sometimes a list with a signature.
     # This checks which one it is and extract only the text.
@@ -164,8 +173,8 @@ app = workflow.compile()
 # Step 5
 # Here test the entire setup with a sample topic.
 if __name__ == "__main__":
-    # This can change the topic wanted to research
-    topic = "The current state of AI computing in 2025"
+    # Here to change the research topic
+    topic = "\n The current state of AI computing in 2025"
 
     print(f"\n Starting the research based on: {topic}\n")
 
