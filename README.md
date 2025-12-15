@@ -58,7 +58,9 @@ The agent is built using a **StateGraph** architecture with three main nodes:
     # TAVILY_API_KEY= Replace with your Tavily API key
     ```
 
-4. Run the Agent:
+4. (Optional) Run the tets_google.py and test_search.py to check which versions of llm available to use as well as the search tool if it is working.
+   
+5. Run the Agent:
     ```bash
     python main.py
     ```
